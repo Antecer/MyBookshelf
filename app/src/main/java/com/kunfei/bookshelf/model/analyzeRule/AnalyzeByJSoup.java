@@ -1,7 +1,9 @@
 package com.kunfei.bookshelf.model.analyzeRule;
 
 import android.text.TextUtils;
+
 import com.kunfei.bookshelf.utils.StringUtils;
+
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Element;
 import org.jsoup.nodes.TextNode;
@@ -58,7 +60,7 @@ public class AnalyzeByJSoup {
         if (textS.size() == 0) {
             return null;
         }
-        return StringUtils.join(",", textS).trim();
+        return TextUtils.join(",", textS).trim();
     }
 
     /**
@@ -381,8 +383,9 @@ public class AnalyzeByJSoup {
                 case "text":
                     for (Element element : elements) {
                         String text = element.text();
-                        textS.add(text);
+                        cText.add(text);
                     }
+                    textS.add(TextUtils.join("\n", cText));
                     break;
                 case "textNodes":
                     for (Element element : elements) {
@@ -398,9 +401,9 @@ public class AnalyzeByJSoup {
                     break;
                 case "ownText":
                     for (Element element : elements) {
-                        String text = element.ownText();
-                        textS.add(text);
+                        cText.add(element.ownText());
                     }
+                    textS.add(TextUtils.join("\n", cText));
                     break;
                 case "html":
                     elements.select("script").remove();

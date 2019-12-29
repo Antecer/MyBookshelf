@@ -36,7 +36,7 @@ public interface ReadBookContract {
 
         void skipToChapter(int chapterIndex, int pageIndex);
 
-        void onMediaButton();
+        void onMediaButton(String cmd);
 
         void upAloudState(ReadAloudService.Status state);
 
@@ -92,7 +92,5 @@ public interface ReadBookContract {
         void disableDurBookSource();
 
         BookSourceBean getBookSource();
-
-        void upBookSource();
     }
 }

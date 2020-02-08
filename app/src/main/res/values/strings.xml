@@ -44,6 +44,9 @@
     <string name="web_service">web服务</string>
     <string name="web_edit_source">web编辑书源</string>
     <string name="http_ip">http://%s:%d</string>
+    <string name="web_service_starting_hint_short">正在启动服务</string>
+    <string name="web_service_starting_hint_long">正在启动服务\n具体信息查看通知栏</string>
+    <string name="web_service_already_started_hint">服务已启动</string>
     <string name="download_offline">离线下载</string>
     <string name="download_offline_t">离线下载</string>
     <string name="download_offline_s">下载选择的章节到本地</string>
@@ -267,6 +270,7 @@
     <string name="pt_default_read">自动跳转最近阅读</string>
     <string name="use_to">替换范围，选填书名或者源名</string>
     <string name="menu_action_group">分组</string>
+    <string name="backup_path">备份路径</string>
     <string name="download_path">内容缓存路径</string>
     <string name="sys_file_picker">系统文件选择器</string>
     <string name="new_version">新版本</string>

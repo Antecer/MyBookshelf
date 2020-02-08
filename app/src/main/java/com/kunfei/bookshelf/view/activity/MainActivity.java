@@ -6,8 +6,11 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.res.Configuration;
 import android.graphics.PorterDuff;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.text.TextUtils;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.Menu;
@@ -19,6 +22,7 @@ import android.widget.PopupMenu;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.RequiresApi;
 import androidx.appcompat.app.ActionBar;
 import androidx.appcompat.app.ActionBarDrawerToggle;
 import androidx.appcompat.app.AlertDialog;
@@ -40,11 +44,15 @@ import com.kunfei.bookshelf.DbHelper;
 import com.kunfei.bookshelf.MApplication;
 import com.kunfei.bookshelf.R;
 import com.kunfei.bookshelf.base.BaseTabActivity;
+import com.kunfei.bookshelf.base.observer.MySingleObserver;
 import com.kunfei.bookshelf.constant.RxBusTag;
 import com.kunfei.bookshelf.help.FileHelp;
 import com.kunfei.bookshelf.help.ProcessTextHelp;
 import com.kunfei.bookshelf.help.permission.Permissions;
 import com.kunfei.bookshelf.help.permission.PermissionsCompat;
+import com.kunfei.bookshelf.help.storage.Backup;
+import com.kunfei.bookshelf.help.storage.Restore;
+import com.kunfei.bookshelf.help.storage.WebDavHelp;
 import com.kunfei.bookshelf.model.UpLastChapterModel;
 import com.kunfei.bookshelf.presenter.MainPresenter;
 import com.kunfei.bookshelf.presenter.contract.MainContract;
@@ -59,18 +67,27 @@ import com.kunfei.bookshelf.view.fragment.FindBookFragment;
 import com.kunfei.bookshelf.widget.modialog.InputDialog;
 import com.kunfei.bookshelf.widget.modialog.MoDialogHUD;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 
 import butterknife.BindView;
 import butterknife.ButterKnife;
+import io.reactivex.Single;
+import io.reactivex.SingleOnSubscribe;
+import io.reactivex.android.schedulers.AndroidSchedulers;
+import io.reactivex.schedulers.Schedulers;
 import kotlin.Unit;
 
 import static com.kunfei.bookshelf.utils.NetworkUtils.isNetWorkAvailable;
 
-public class MainActivity extends BaseTabActivity<MainContract.Presenter> implements MainContract.View, BookListFragment.CallbackValue {
+public class MainActivity extends BaseTabActivity<MainContract.Presenter> implements MainContract.View,
+        BookListFragment.CallbackValue,
+        Backup.CallBack {
     private final int requestSource = 14;
+    private final int backupSelectRequestCode = 23;
+    private final int restoreSelectRequestCode = 33;
     private String[] mTitles;
 
     @BindView(R.id.drawer)
@@ -86,7 +103,6 @@ public class MainActivity extends BaseTabActivity<MainContract.Presenter> implem
 
     private AppCompatImageView vwNightTheme;
     private int group;
-    private boolean viewIsList;
     private ActionBarDrawerToggle mDrawerToggle;
     private MoDialogHUD moDialogHUD;
     private long exitTime = 0;
@@ -159,7 +175,6 @@ public class MainActivity extends BaseTabActivity<MainContract.Presenter> implem
 
     @Override
     protected void initData() {
-        viewIsList = preferences.getBoolean("bookshelfIsList", true);
         mTitles = new String[]{getString(R.string.bookshelf), getString(R.string.find)};
     }
 
@@ -447,10 +462,11 @@ public class MainActivity extends BaseTabActivity<MainContract.Presenter> implem
                         }).show();
                 break;
             case R.id.action_download_all:
-                if (!isNetWorkAvailable())
+                if (!isNetWorkAvailable()) {
                     toast(R.string.network_connection_unavailable);
-                else
+                } else {
                     RxBus.get().post(RxBusTag.DOWNLOAD_ALL, 10000);
+                }
                 break;
             case R.id.menu_bookshelf_layout:
                 selectBookshelfLayout();
@@ -461,7 +477,10 @@ public class MainActivity extends BaseTabActivity<MainContract.Presenter> implem
                 }
                 break;
             case R.id.action_web_start:
-                WebService.startThis(this);
+                boolean startedThisTime = WebService.startThis(this);
+                if (!startedThisTime) {
+                    toast(getString(R.string.web_service_already_started_hint));
+                }
                 break;
             case android.R.id.home:
                 if (drawer.isDrawerOpen(GravityCompat.START)) {
@@ -585,10 +604,27 @@ public class MainActivity extends BaseTabActivity<MainContract.Presenter> implem
                 }).show();
     }
 
+    private String getBackupPath() {
+        return preferences.getString("backupPath", "");
+    }
+
     /**
      * 备份
      */
     private void backup() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+            String path = getBackupPath();
+            if (TextUtils.isEmpty(path)) {
+                selectBackupFolder();
+            } else {
+                Backup.INSTANCE.backup(this, Uri.parse(path), MainActivity.this);
+            }
+        } else {
+            backupOld();
+        }
+    }
+
+    private void backupOld() {
         new PermissionsCompat.Builder(this)
                 .addPermissions(Permissions.READ_EXTERNAL_STORAGE, Permissions.WRITE_EXTERNAL_STORAGE)
                 .rationale(R.string.backup_permission)
@@ -596,7 +632,9 @@ public class MainActivity extends BaseTabActivity<MainContract.Presenter> implem
                     AlertDialog alertDialog = new AlertDialog.Builder(MainActivity.this)
                             .setTitle(R.string.backup_confirmation)
                             .setMessage(R.string.backup_message)
-                            .setPositiveButton(R.string.ok, (dialog, which) -> mPresenter.backupData())
+                            .setPositiveButton(R.string.ok, (dialog, which) ->
+                                    Backup.INSTANCE.backup(MainActivity.this, null, MainActivity.this)
+                            )
                             .setNegativeButton(R.string.cancel, null)
                             .show();
                     ATH.setAlertDialogTint(alertDialog);
@@ -604,23 +642,88 @@ public class MainActivity extends BaseTabActivity<MainContract.Presenter> implem
                 }).request();
     }
 
+    @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
+    private void selectBackupFolder() {
+        try {
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivityForResult(intent, backupSelectRequestCode);
+        } catch (Exception e) {
+            backupOld();
+        }
+    }
+
     /**
      * 恢复
      */
     private void restore() {
-        new PermissionsCompat.Builder(this)
-                .addPermissions(Permissions.READ_EXTERNAL_STORAGE, Permissions.WRITE_EXTERNAL_STORAGE)
-                .rationale(R.string.restore_permission)
-                .onGranted((requestCode) -> {
-                    AlertDialog alertDialog = new AlertDialog.Builder(MainActivity.this)
-                            .setTitle(R.string.restore_confirmation)
-                            .setMessage(R.string.restore_message)
-                            .setPositiveButton(R.string.ok, (dialog, which) -> mPresenter.restoreData())
-                            .setNegativeButton(R.string.cancel, null)
-                            .show();
-                    ATH.setAlertDialogTint(alertDialog);
-                    return Unit.INSTANCE;
-                }).request();
+        Single.create((SingleOnSubscribe<ArrayList<String>>) emitter -> {
+            emitter.onSuccess(WebDavHelp.INSTANCE.getWebDavFileNames());
+        }).subscribeOn(Schedulers.io())
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(new MySingleObserver<ArrayList<String>>() {
+                    @Override
+                    public void onSuccess(ArrayList<String> strings) {
+                        if (!WebDavHelp.INSTANCE.showRestoreDialog(MainActivity.this, strings)) {
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                                String path = getBackupPath();
+                                if (TextUtils.isEmpty(path)) {
+                                    selectRestoreFolder();
+                                } else {
+                                    restore(Uri.parse(path));
+                                }
+                            } else {
+                                new PermissionsCompat.Builder(MainActivity.this)
+                                        .addPermissions(Permissions.READ_EXTERNAL_STORAGE, Permissions.WRITE_EXTERNAL_STORAGE)
+                                        .rationale(R.string.restore_permission)
+                                        .onGranted((requestCode) -> {
+                                            restoreOld();
+                                            return Unit.INSTANCE;
+                                        }).request();
+                            }
+                        }
+                    }
+                });
+
+    }
+
+    private void restore(Uri uri) {
+        Single.create((SingleOnSubscribe<Boolean>) e -> {
+            Restore.INSTANCE.restore(this, uri);
+            e.onSuccess(true);
+        }).subscribeOn(Schedulers.io())
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(new MySingleObserver<Boolean>() {
+                    @Override
+                    public void onSuccess(Boolean t) {
+                        recreate();
+                    }
+                });
+    }
+
+    private void restoreOld() {
+        Single.create((SingleOnSubscribe<Boolean>) e -> {
+            Restore.INSTANCE.restore(Backup.INSTANCE.getDefaultPath());
+            e.onSuccess(true);
+        }).subscribeOn(Schedulers.io())
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(new MySingleObserver<Boolean>() {
+                    @Override
+                    public void onSuccess(Boolean t) {
+                        recreate();
+                    }
+                });
+    }
+
+    @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
+    private void selectRestoreFolder() {
+        try {
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivityForResult(intent, restoreSelectRequestCode);
+        } catch (Exception e) {
+            restoreOld();
+        }
     }
 
     /**
@@ -687,6 +790,11 @@ public class MainActivity extends BaseTabActivity<MainContract.Presenter> implem
         }
     }
 
+    @Override
+    public void backupSuccess() {
+        toast(R.string.backup_success);
+    }
+
     /**
      * 退出
      */
@@ -714,13 +822,33 @@ public class MainActivity extends BaseTabActivity<MainContract.Presenter> implem
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (resultCode == RESULT_OK) {
-            if (requestCode == requestSource) {
-                FindBookFragment findBookFragment = getFindFragment();
-                if (findBookFragment != null) {
-                    findBookFragment.refreshData();
+        switch (requestCode) {
+            case requestSource:
+                if (resultCode == RESULT_OK) {
+                    FindBookFragment findBookFragment = getFindFragment();
+                    if (findBookFragment != null) {
+                        findBookFragment.refreshData();
+                    }
                 }
-            }
+                break;
+            case backupSelectRequestCode:
+                if (resultCode == RESULT_OK && data != null) {
+                    Uri uri = data.getData();
+                    if (uri == null) return;
+                    getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                    preferences.edit().putString("backupPath", uri.toString()).apply();
+                    backup();
+                }
+                break;
+            case restoreSelectRequestCode:
+                if (resultCode == RESULT_OK && data != null) {
+                    Uri uri = data.getData();
+                    if (uri == null) return;
+                    getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                    preferences.edit().putString("backupPath", uri.toString()).apply();
+                    restore(uri);
+                }
+                break;
         }
     }
 

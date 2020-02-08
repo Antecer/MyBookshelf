@@ -1,8 +1,8 @@
 package com.kunfei.bookshelf.view.fragment;
 
-import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.Uri;
 import android.os.Bundle;
 import android.preference.ListPreference;
 import android.preference.Preference;
@@ -30,12 +30,15 @@ import java.util.Objects;
 
 import kotlin.Unit;
 
+import static android.app.Activity.RESULT_OK;
+
 /**
  * Created by GKF on 2017/12/16.
  * 设置
  */
 public class SettingsFragment extends PreferenceFragment implements SharedPreferences.OnSharedPreferenceChangeListener {
     private SettingActivity settingActivity;
+    private final int backupSelectRequestCode = 23;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -54,6 +57,7 @@ public class SettingsFragment extends PreferenceFragment implements SharedPrefer
         addPreferencesFromResource(R.xml.pref_settings);
         bindPreferenceSummaryToValue(findPreference(getString(R.string.pk_bookshelf_px)));
         bindPreferenceSummaryToValue(findPreference(getString(R.string.pk_download_path)));
+        bindPreferenceSummaryToValue(findPreference("backupPath"));
     }
 
     private static Preference.OnPreferenceChangeListener sBindPreferenceSummaryToValueListener = (Preference preference, Object value) -> {
@@ -71,11 +75,14 @@ public class SettingsFragment extends PreferenceFragment implements SharedPrefer
         return true;
     };
 
-    private static void bindPreferenceSummaryToValue(Preference preference) {
+    private void bindPreferenceSummaryToValue(Preference preference) {
         // Set the listener to watch for value changes.
         preference.setOnPreferenceChangeListener(sBindPreferenceSummaryToValueListener);
-        sBindPreferenceSummaryToValueListener.onPreferenceChange(preference,
-                preference.getContext().getSharedPreferences("CONFIG", Context.MODE_PRIVATE).getString(preference.getKey(), ""));
+        sBindPreferenceSummaryToValueListener.onPreferenceChange(preference, getPrefValue(preference.getKey()));
+    }
+
+    private String getPrefValue(String key) {
+        return MApplication.getConfigPreferences().getString(key, "");
     }
 
     @Override
@@ -105,6 +112,16 @@ public class SettingsFragment extends PreferenceFragment implements SharedPrefer
     public boolean onPreferenceTreeClick(PreferenceScreen preferenceScreen, Preference preference) {
         if (preference.getKey().equals(getString(R.string.pk_download_path))) {
             selectDownloadPath(preference);
+        } else if (preference.getKey().equals("backupPath")) {
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    startActivityForResult(intent, backupSelectRequestCode);
+                }
+            } catch (Exception ignored) {
+
+            }
         } else if (preference.getKey().equals("webDavSetting")) {
             WebDavSettingsFragment webDavSettingsFragment = new WebDavSettingsFragment();
             getFragmentManager().beginTransaction().replace(R.id.settingsFrameLayout, webDavSettingsFragment, "webDavSettings").commit();
@@ -153,5 +170,11 @@ public class SettingsFragment extends PreferenceFragment implements SharedPrefer
     @Override
     public void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == backupSelectRequestCode && resultCode == RESULT_OK && data != null) {
+            Uri uri = data.getData();
+            if (uri == null) return;
+            getPreferenceManager().getSharedPreferences().edit().putString("backupPath", uri.toString()).apply();
+            findPreference("backupPath").setSummary(uri.toString());
+        }
     }
 }
